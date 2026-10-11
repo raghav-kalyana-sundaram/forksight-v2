@@ -1,10 +1,12 @@
 import type { PlayStatus, Variation } from "./types";
 
-export type Mark = "plain" | "current" | "next" | "wrong" | "faded";
+export type Mark = "plain" | "current" | "next" | "wrong" | "faded" | "past" | "line" | "good" | "corrected";
 
 export type Cell = {
   san: string | null;
   mark: Mark;
+  strike?: string;
+  latest?: boolean;
 };
 
 export type SheetBlock =
@@ -14,6 +16,7 @@ export type SheetBlock =
 type Draft = {
   san: string | null;
   ply: number;
+  strike?: string;
 };
 
 export function themeLabel(theme: string): string {
@@ -38,7 +41,7 @@ export function buildSheet(args: {
   history: string[];
   fenPly: number;
   setupSan: string;
-  attempt: string[];
+  attempt: { san: string; strike?: string }[];
   status: PlayStatus;
   wrongIndex: number | null;
   revealed: string | null;
@@ -53,9 +56,9 @@ export function buildSheet(args: {
     cells.set(startPly + index, { san, ply: startPly + index });
   });
 
-  args.attempt.forEach((san, index) => {
+  args.attempt.forEach((move, index) => {
     const ply = args.fenPly + 1 + index;
-    cells.set(ply, { san, ply });
+    cells.set(ply, { san: move.san, ply, strike: move.strike });
   });
 
   const failed = args.status === "wrong" || args.status === "gave-up";
@@ -84,12 +87,15 @@ export function buildSheet(args: {
     ...[...cells.entries()].filter(([, cell]) => cell.san).map(([ply]) => ply),
   );
 
-  function mark(ply: number, san: string | null): Mark {
+  function mark(ply: number, san: string | null, strike?: string): Mark {
     if (target != null && ply === target) return "wrong";
     if (failed) return "faded";
     if (san == null) return "next";
-    if (ply === lastFilled) return "current";
-    return "plain";
+    if (strike) return "corrected";
+    if (args.status === "solved" && ply > args.fenPly) return "good";
+    if (ply < args.fenPly) return "past";
+    if (ply === args.fenPly) return args.attempt.length > 0 ? "past" : "current";
+    return "line";
   }
 
   const firstRow = Math.floor(Math.min(...plies) / 2);
@@ -112,8 +118,22 @@ export function buildSheet(args: {
     blocks.push({
       type: "row",
       number: row + 1,
-      white: white ? { san: white.san, mark: mark(whitePly, white.san) } : null,
-      black: black ? { san: black.san, mark: mark(blackPly, black.san) } : null,
+      white: white
+        ? {
+            san: white.san,
+            mark: mark(whitePly, white.san, white.strike),
+            strike: white.strike,
+            latest: white.san != null && whitePly === lastFilled,
+          }
+        : null,
+      black: black
+        ? {
+            san: black.san,
+            mark: mark(blackPly, black.san, black.strike),
+            strike: black.strike,
+            latest: black.san != null && blackPly === lastFilled,
+          }
+        : null,
     });
     for (const ply of [whitePly, blackPly]) {
       for (const variation of variationsAt.get(ply) ?? []) {

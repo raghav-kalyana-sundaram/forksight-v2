@@ -124,6 +124,7 @@ for await (const line of rl) {
     black: playerName(game?.players?.black),
     blackRating: Number(game?.players?.black?.rating) || 0,
     event: clockLabel(game?.clock, game?.perf || game?.speed),
+    gameUrl: puzzle.GameUrl || (game?.id ? `https://lichess.org/${game.id}` : ""),
     history,
     fenPly: origin,
   });

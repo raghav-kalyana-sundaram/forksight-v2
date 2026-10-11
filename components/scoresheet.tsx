@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, type RefObject } from "react";
-import { buildSheet, type Mark } from "@/lib/sheet";
+import { buildSheet, type Cell as SheetCell } from "@/lib/sheet";
 import type { PlayStatus, Variation } from "@/lib/types";
 
 export function Scoresheet({
@@ -15,31 +15,27 @@ export function Scoresheet({
   allowNext,
   variations,
   canSubmit,
+  canNext,
   checking,
-  canGiveUp,
-  canContinue,
   onSubmit,
   onGiveUp,
   onNext,
-  onContinue,
 }: {
   history: string[];
   fenPly: number;
   setupSan: string;
-  attempt: string[];
+  attempt: { san: string; strike?: string }[];
   status: PlayStatus;
   wrongIndex: number | null;
   revealed: string | null;
   allowNext: boolean;
   variations: Variation[];
   canSubmit: boolean;
+  canNext: boolean;
   checking: boolean;
-  canGiveUp: boolean;
-  canContinue: boolean;
   onSubmit: () => void;
   onGiveUp: () => void;
   onNext: () => void;
-  onContinue: () => void;
 }) {
   const focusRef = useRef<HTMLDivElement | null>(null);
   const blocks = buildSheet({
@@ -53,6 +49,11 @@ export function Scoresheet({
     allowNext,
     variations,
   });
+  const finished = status === "solved" || status === "gave-up";
+  const showSubmit = status === "playing" || status === "checking" || status === "wrong";
+  const showGiveUp = status === "playing" || status === "wrong";
+  const showNext = canNext || finished;
+  const corrected = status === "playing" && attempt.some((move) => move.strike);
 
   useEffect(() => {
     focusRef.current?.scrollIntoView({ block: "nearest" });
@@ -81,20 +82,31 @@ export function Scoresheet({
         </div>
       </div>
       {status === "wrong" ? <p className="again">Try again</p> : null}
-      <button className="submit" type="button" disabled={!canSubmit} onClick={onSubmit}>
-        {checking ? "Checking" : "Submit"}
-      </button>
-      <div className="actions">
-        <button type="button" disabled={!canGiveUp} onClick={onGiveUp}>
-          Give up
+      {corrected ? <p className="instead">What if your opponent played this instead?</p> : null}
+      {showSubmit ? (
+        <button className="submit" type="button" disabled={!canSubmit || checking} onClick={onSubmit}>
+          {checking ? "Checking" : "Submit"}
         </button>
-        <button type="button" disabled={checking} onClick={onNext}>
+      ) : null}
+      {finished ? (
+        <button className="submit" type="button" onClick={onNext}>
           Next puzzle
         </button>
-        <button type="button" disabled={!canContinue} onClick={onContinue}>
-          Continue
-        </button>
-      </div>
+      ) : null}
+      {showGiveUp || (showNext && !finished) ? (
+        <div className="actions">
+          {showGiveUp ? (
+            <button type="button" onClick={onGiveUp}>
+              Give up
+            </button>
+          ) : null}
+          {showNext && !finished ? (
+            <button type="button" onClick={onNext}>
+              Next puzzle
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -103,17 +115,20 @@ function Cell({
   cell,
   focusRef,
 }: {
-  cell: { san: string | null; mark: Mark } | null;
+  cell: SheetCell | null;
   focusRef: RefObject<HTMLDivElement | null>;
 }) {
   if (!cell) return <div className="cell empty" />;
-  const focus = cell.mark === "current" || cell.mark === "next" || cell.mark === "wrong";
+  const focus = cell.mark === "current" || cell.mark === "next" || cell.mark === "wrong" || cell.latest;
   return (
-    <div
-      className={`cell ${cell.mark}`}
-      ref={focus ? focusRef : undefined}
-    >
-      {cell.san}
+    <div className={`cell ${cell.mark}${cell.latest ? " latest" : ""}`} ref={focus ? focusRef : undefined}>
+      {cell.strike ? (
+        <>
+          <s>{cell.strike}</s> ({cell.san})
+        </>
+      ) : (
+        cell.san
+      )}
     </div>
   );
 }

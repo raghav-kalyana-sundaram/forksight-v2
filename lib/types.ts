@@ -11,6 +11,7 @@ export type Puzzle = {
   black: string;
   blackRating: number;
   event: string;
+  gameUrl: string;
   history: string[];
   fenPly: number;
 };
@@ -18,6 +19,7 @@ export type Puzzle = {
 export type AttemptMove = {
   uci: string;
   san: string;
+  strike?: string;
 };
 
 export type Variation = {

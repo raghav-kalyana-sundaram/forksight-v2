@@ -10,10 +10,17 @@ import { pickPuzzle, ratingDelta } from "@/lib/rating";
 import { formatClock } from "@/lib/sheet";
 import type { AttemptMove, PlayStatus, Puzzle, Variation } from "@/lib/types";
 
+type Result = {
+  id: string;
+  rating: number;
+  delta: number;
+};
+
 type Progress = {
   rating: number;
   streak: number;
   seen: string[];
+  history: Result[];
 };
 
 type Play = {
@@ -24,7 +31,7 @@ type Play = {
   status: PlayStatus;
   wrongIndex: number | null;
   revealed: string | null;
-  continuing: boolean;
+  tried: boolean;
 };
 
 const PROGRESS_KEY = "forksight-progress";
@@ -32,15 +39,25 @@ const PROGRESS_KEY = "forksight-progress";
 function loadProgress(): Progress {
   try {
     const raw = localStorage.getItem(PROGRESS_KEY);
-    if (!raw) return { rating: 1500, streak: 0, seen: [] };
+    if (!raw) return { rating: 1500, streak: 0, seen: [], history: [] };
     const parsed = JSON.parse(raw) as Partial<Progress>;
+    const history = Array.isArray(parsed.history)
+      ? parsed.history.filter(
+          (item): item is Result =>
+            !!item &&
+            typeof item.id === "string" &&
+            typeof item.rating === "number" &&
+            typeof item.delta === "number",
+        )
+      : [];
     return {
       rating: typeof parsed.rating === "number" ? parsed.rating : 1500,
       streak: typeof parsed.streak === "number" ? parsed.streak : 0,
       seen: Array.isArray(parsed.seen) ? parsed.seen.filter((id) => typeof id === "string") : [],
+      history,
     };
   } catch {
-    return { rating: 1500, streak: 0, seen: [] };
+    return { rating: 1500, streak: 0, seen: [], history: [] };
   }
 }
 
@@ -57,7 +74,7 @@ function freshPlay(puzzle: Puzzle): Play {
     status: "playing",
     wrongIndex: null,
     revealed: null,
-    continuing: false,
+    tried: false,
   };
 }
 
@@ -78,7 +95,7 @@ function Timer({ clockKey }: { clockKey: string }) {
     }, 1000);
     return () => window.clearInterval(id);
   }, [clockKey]);
-  return <div className="timer">{formatClock(elapsed)}</div>;
+  return formatClock(elapsed);
 }
 
 function initialSession(puzzles: Puzzle[]) {
@@ -92,12 +109,32 @@ function initialSession(puzzles: Puzzle[]) {
   return { progress, play: freshPlay(puzzle), theme };
 }
 
+function PuzzleHistory({ results }: { results: Result[] }) {
+  const endRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ inline: "end", block: "nearest" });
+  }, [results.length]);
+  if (results.length === 0) return null;
+  return (
+    <div className="history">
+      {results.map((result, index) => (
+        <div key={`${result.id}-${index}`} className={`result ${result.delta >= 0 ? "up" : "down"}`}>
+          <span>{result.rating}</span>
+          <span>{result.delta > 0 ? `+${result.delta}` : result.delta}</span>
+        </div>
+      ))}
+      <div ref={endRef} />
+    </div>
+  );
+}
+
 function Shell({
   theme,
   onTheme,
   puzzle,
   progress,
   delta,
+  time,
   children,
 }: {
   theme: "dark" | "light";
@@ -105,6 +142,7 @@ function Shell({
   puzzle: Puzzle | null;
   progress: Progress | null;
   delta: number | null;
+  time: ReactNode;
   children?: ReactNode;
 }) {
   return (
@@ -121,6 +159,7 @@ function Shell({
           rating={progress?.rating ?? null}
           delta={delta}
           streak={progress?.streak ?? null}
+          time={time}
         />
         {children}
       </main>
@@ -130,7 +169,7 @@ function Shell({
 
 export function PuzzleScreen({ puzzles }: { puzzles: Puzzle[] }) {
   const client = useIsClient();
-  if (!client) return <Shell theme="dark" onTheme={() => {}} puzzle={null} progress={null} delta={null} />;
+  if (!client) return <Shell theme="dark" onTheme={() => {}} puzzle={null} progress={null} delta={null} time="0:00" />;
   return <LoadedScreen puzzles={puzzles} />;
 }
 
@@ -163,6 +202,7 @@ function LoadedScreen({ puzzles }: { puzzles: Puzzle[] }) {
       ...prog,
       rating: prog.rating + change,
       streak: success ? prog.streak + 1 : 0,
+      history: [...prog.history, { id: current.puzzle.id, rating: current.puzzle.rating, delta: change }].slice(-24),
     };
     progressRef.current = next;
     saveProgress(next);
@@ -189,21 +229,15 @@ function LoadedScreen({ puzzles }: { puzzles: Puzzle[] }) {
   function playMove(uci: string) {
     setPlay((prev) => {
       if (!prev) return prev;
-      if (prev.status === "checking" || prev.status === "gave-up") return prev;
-      if (prev.status === "solved" && !prev.continuing) return prev;
+      if (prev.status === "checking" || prev.status === "gave-up" || prev.status === "solved") return prev;
       const base = prev.status === "wrong" ? [] : prev.attempt;
-      const pastLine =
-        prev.status !== "wrong" &&
-        prev.status !== "solved" &&
-        !prev.continuing &&
-        base.length >= prev.solution.length;
-      if (pastLine) return prev;
+      if (base.length >= prev.solution.length) return prev;
       const fen = fenAfter(prev.puzzle, base.map((move) => move.uci));
       const applied = tryMove(fen, uci);
       if (!applied) return prev;
       return {
         ...prev,
-        status: prev.status === "solved" ? "solved" : "playing",
+        status: "playing",
         wrongIndex: null,
         revealed: null,
         attempt: [...base, { uci, san: applied.san }],
@@ -213,17 +247,50 @@ function LoadedScreen({ puzzles }: { puzzles: Puzzle[] }) {
 
   async function submit() {
     const current = playRef.current;
-    if (!current || current.status !== "playing" || current.attempt.length === 0) return;
+    if (!current || current.status !== "playing" || current.attempt.length < current.solution.length) return;
     const attempt = current.attempt.map((move) => move.uci);
     const grade = gradeAttempt(attempt, current.solution);
     if (grade.type === "solved") {
       award(true);
-      setPlay((prev) => (prev ? { ...prev, status: "solved", wrongIndex: null, revealed: null } : prev));
+      setPlay((prev) =>
+        prev
+          ? {
+              ...prev,
+              attempt: prev.attempt.map(({ uci, san }) => ({ uci, san })),
+              status: "solved",
+              wrongIndex: null,
+              revealed: null,
+            }
+          : prev,
+      );
+      return;
+    }
+    if (grade.type === "opponent") {
+      const rightUci = current.solution[grade.index];
+      const rightSan = sanOnLine(current.puzzle, current.solution, grade.index);
+      if (!rightSan) {
+        setPlay((prev) =>
+          prev ? { ...prev, status: "wrong", wrongIndex: grade.index, revealed: null, tried: true } : prev,
+        );
+        return;
+      }
+      const nextPlay: Play = {
+        ...current,
+        attempt: [
+          ...current.attempt.slice(0, grade.index),
+          { uci: rightUci, san: rightSan, strike: current.attempt[grade.index].san },
+        ],
+        status: "playing",
+        wrongIndex: null,
+        revealed: null,
+      };
+      playRef.current = nextPlay;
+      setPlay(nextPlay);
       return;
     }
     if (grade.type !== "solver") {
       setPlay((prev) =>
-        prev ? { ...prev, status: "wrong", wrongIndex: grade.index, revealed: null } : prev,
+        prev ? { ...prev, status: "wrong", wrongIndex: grade.index, revealed: null, tried: true } : prev,
       );
       return;
     }
@@ -248,7 +315,7 @@ function LoadedScreen({ puzzles }: { puzzles: Puzzle[] }) {
       const continuation = body.continuation ?? [];
       if (!body.accept || continuation[0] !== attempt[grade.index]) {
         setPlay((prev) =>
-          prev ? { ...prev, status: "wrong", wrongIndex: grade.index, revealed: null } : prev,
+          prev ? { ...prev, status: "wrong", wrongIndex: grade.index, revealed: null, tried: true } : prev,
         );
         return;
       }
@@ -257,7 +324,16 @@ function LoadedScreen({ puzzles }: { puzzles: Puzzle[] }) {
       if (again.type === "solved") {
         award(true);
         setPlay((prev) =>
-          prev ? { ...prev, solution, status: "solved", wrongIndex: null, revealed: null } : prev,
+          prev
+            ? {
+                ...prev,
+                solution,
+                attempt: prev.attempt.map(({ uci, san }) => ({ uci, san })),
+                status: "solved",
+                wrongIndex: null,
+                revealed: null,
+              }
+            : prev,
         );
         return;
       }
@@ -277,7 +353,6 @@ function LoadedScreen({ puzzles }: { puzzles: Puzzle[] }) {
           status: "playing",
           wrongIndex: null,
           revealed: null,
-          continuing: false,
           variations: exists ? prev.variations : [...prev.variations, variation],
         };
       });
@@ -285,7 +360,7 @@ function LoadedScreen({ puzzles }: { puzzles: Puzzle[] }) {
       console.error(error);
       if (id !== requestId.current) return;
       setPlay((prev) =>
-        prev ? { ...prev, status: "wrong", wrongIndex: grade.index, revealed: null } : prev,
+        prev ? { ...prev, status: "wrong", wrongIndex: grade.index, revealed: null, tried: true } : prev,
       );
     }
   }
@@ -306,7 +381,7 @@ function LoadedScreen({ puzzles }: { puzzles: Puzzle[] }) {
     award(false);
     setPlay((prev) =>
       prev
-        ? { ...prev, status: "gave-up", wrongIndex: grade.index, revealed, continuing: false }
+        ? { ...prev, status: "gave-up", wrongIndex: grade.index, revealed }
         : prev,
     );
   }
@@ -333,18 +408,10 @@ function LoadedScreen({ puzzles }: { puzzles: Puzzle[] }) {
   const hiddenFen = play
     ? fenAfter(
         play.puzzle,
-        play.status === "playing" || play.status === "checking" || (play.status === "solved" && play.continuing)
-          ? play.attempt.map((move) => move.uci)
-          : [],
+        play.status === "playing" || play.status === "checking" ? play.attempt.map((move) => move.uci) : [],
       )
     : null;
-  const interactive = Boolean(
-    play &&
-      hiddenFen &&
-      (play.status === "playing" ||
-        play.status === "wrong" ||
-        (play.status === "solved" && play.continuing)),
-  );
+  const interactive = Boolean(play && hiddenFen && (play.status === "playing" || play.status === "wrong"));
 
   return (
     <div className="app">
@@ -355,63 +422,57 @@ function LoadedScreen({ puzzles }: { puzzles: Puzzle[] }) {
         </button>
       </header>
       <main className="main">
-        <MetaPanel
-          puzzle={play?.puzzle ?? null}
-          rating={progress?.rating ?? null}
-          delta={delta}
-          streak={progress?.streak ?? null}
-        />
-        <div className="stage">
-          <div className="board-wrap">
-            {play && visualFen && hiddenFen ? (
-              <Board
-                key={`${play.puzzle.id}:${nonce}`}
-                visualFen={visualFen}
-                hiddenFen={hiddenFen}
-                orientation={solverOrientation(play.puzzle)}
-                lastMove={uciSquares(play.puzzle.setup)}
-                interactive={interactive}
-                onMove={playMove}
-              />
-            ) : (
-              <div className="board" />
-            )}
-          </div>
-          <Timer key={`${play.puzzle.id}:${nonce}`} clockKey={`${play.puzzle.id}:${nonce}`} />
-        </div>
-        <div className="sheet-col">
-          {play ? (
-            <Scoresheet
-              history={play.puzzle.history}
-              fenPly={play.puzzle.fenPly}
-              setupSan={san}
-              attempt={play.attempt.map((move) => move.san)}
-              status={play.status}
-              wrongIndex={play.wrongIndex}
-              revealed={play.revealed}
-              allowNext={
-                play.status === "playing" &&
-                (play.continuing || play.attempt.length < play.solution.length)
-              }
-              variations={play.variations}
-              canSubmit={play.status === "playing" && play.attempt.length > 0}
-              checking={play.status === "checking"}
-              canGiveUp={play.status === "playing" || play.status === "wrong"}
-              canContinue={
-                !play.continuing &&
-                ((play.status === "playing" && play.attempt.length >= play.solution.length) ||
-                  play.status === "solved")
-              }
-              onSubmit={submit}
-              onGiveUp={giveUp}
-              onNext={nextPuzzle}
-              onContinue={() =>
-                setPlay((prev) => (prev ? { ...prev, continuing: true } : prev))
-              }
+        <div className="desk">
+          <div className="play">
+            <MetaPanel
+              puzzle={play?.puzzle ?? null}
+              rating={progress?.rating ?? null}
+              delta={delta}
+              streak={progress?.streak ?? null}
+              time={<Timer key={`${play.puzzle.id}:${nonce}`} clockKey={`${play.puzzle.id}:${nonce}`} />}
             />
-          ) : (
-            <section className="sheet-panel" />
-          )}
+            <div className="stage">
+              <div className="board-wrap">
+                {play && visualFen && hiddenFen ? (
+                  <Board
+                    key={`${play.puzzle.id}:${nonce}`}
+                    visualFen={visualFen}
+                    hiddenFen={hiddenFen}
+                    orientation={solverOrientation(play.puzzle)}
+                    lastMove={uciSquares(play.puzzle.setup)}
+                    interactive={interactive}
+                    onMove={playMove}
+                  />
+                ) : (
+                  <div className="board" />
+                )}
+              </div>
+            </div>
+            <div className="sheet-col">
+              {play ? (
+                <Scoresheet
+                  history={play.puzzle.history}
+                  fenPly={play.puzzle.fenPly}
+                  setupSan={san}
+                  attempt={play.attempt.map((move) => ({ san: move.san, strike: move.strike }))}
+                  status={play.status}
+                  wrongIndex={play.wrongIndex}
+                  revealed={play.revealed}
+                  allowNext={play.status === "playing" && play.attempt.length < play.solution.length}
+                  variations={play.variations}
+                  canSubmit={play.status === "playing" && play.attempt.length >= play.solution.length}
+                  canNext={play.tried && (play.status === "playing" || play.status === "wrong")}
+                  checking={play.status === "checking"}
+                  onSubmit={submit}
+                  onGiveUp={giveUp}
+                  onNext={nextPuzzle}
+                />
+              ) : (
+                <section className="sheet-panel" />
+              )}
+            </div>
+          </div>
+          <PuzzleHistory results={progress?.history ?? []} />
         </div>
       </main>
     </div>

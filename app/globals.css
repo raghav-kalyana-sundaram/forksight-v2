@@ -15,6 +15,11 @@
   --up: #81b64c;
   --down: #e35d5d;
   --next: rgba(255, 255, 255, 0.07);
+  --past: #6f6f6f;
+  --line: #9aa0a6;
+  --line-bg: rgba(255, 255, 255, 0.08);
+  --alt: #7f8b96;
+  --good-cell: #3d8c2a;
 }
 
 [data-theme="light"] {
@@ -33,6 +38,11 @@
   --up: #3d7a12;
   --down: #b33434;
   --next: rgba(0, 0, 0, 0.06);
+  --past: #8a8a8a;
+  --line: #5f656b;
+  --line-bg: rgba(0, 0, 0, 0.06);
+  --alt: #6d7c89;
+  --good-cell: #3d8c2a;
 }
 
 * {
@@ -93,49 +103,60 @@ button {
   flex: 1;
   min-height: 0;
   display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 12px 16px 10px;
+}
+
+.desk {
+  --board: min(640px, calc(100vh - 150px), calc(100vw - 640px));
+  width: min(100%, calc(268px + var(--board) + 300px + 24px));
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.play {
+  min-height: 0;
+  flex: none;
+  display: grid;
+  grid-template-columns: 268px var(--board) 300px;
+  gap: 12px;
+  align-items: stretch;
+  height: var(--board);
 }
 
 .meta,
-.sheet-col {
-  width: 300px;
-  flex: none;
-  padding: 12px;
+.sheet-col,
+.stage {
+  min-width: 0;
   min-height: 0;
+  height: 100%;
 }
 
 .meta {
-  overflow: auto;
-}
-
-.panel-block {
   background: var(--panel);
   border: 1px solid var(--panel-border);
   border-radius: 3px;
-  padding: 14px 16px;
-  margin-bottom: 10px;
+  padding: 16px 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow: auto;
 }
 
-.panel-block p {
-  margin: 0 0 4px;
+.meta p {
+  margin: 0;
 }
 
-.puzzle-id {
-  color: var(--text-strong);
-}
-
-.dim,
-.from,
 .streak {
   color: var(--dim);
-}
-
-.from {
-  margin-top: 12px;
+  margin-top: 8px;
 }
 
 .rating-block {
-  padding-top: 18px;
-  padding-bottom: 18px;
+  padding: 0;
 }
 
 .rating-line {
@@ -162,30 +183,58 @@ button {
   font-weight: 600;
 }
 
-.streak {
-  margin-top: 10px;
-  margin-bottom: 0;
-}
-
 .themes {
   color: var(--accent);
   line-height: 1.6;
+  margin-top: 6px;
+}
+
+.time-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-strong);
+}
+
+.clock {
+  width: 16px;
+  height: 16px;
+  color: var(--dim);
+}
+
+.puzzle-facts p:first-child {
+  color: var(--text-strong);
+}
+
+.game {
+  margin-top: 4px;
+  color: inherit;
+  text-decoration: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.game p {
   margin: 0;
 }
 
+.game-event {
+  color: var(--accent);
+}
+
+.game:hover .game-event {
+  text-decoration: underline;
+}
+
 .stage {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 16px 12px 20px;
 }
 
 .board-wrap {
-  width: min(100%, calc(100vh - 140px));
+  width: 100%;
+  height: 100%;
 }
 
 .board {
@@ -262,12 +311,26 @@ button {
   bottom: 2px;
 }
 
+.shapes {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: 0.85;
+}
+
 .piece,
 .ghost {
   position: absolute;
   width: 12.5%;
   height: 12.5%;
   pointer-events: none;
+}
+
+.piece {
+  z-index: 2;
 }
 
 .piece.lifted {
@@ -309,14 +372,6 @@ button {
   display: block;
 }
 
-.timer {
-  margin-top: 10px;
-  text-align: center;
-  font-size: 18px;
-  font-variant-numeric: tabular-nums;
-  color: var(--text);
-}
-
 .sheet-col {
   display: flex;
   flex-direction: column;
@@ -352,8 +407,9 @@ button {
 
 .variation {
   display: block;
-  color: var(--dim);
+  color: var(--alt);
   font-size: 13px;
+  font-style: italic;
   padding: 1px 8px 1px 2.6rem;
 }
 
@@ -377,9 +433,36 @@ button {
   color: var(--text-strong);
 }
 
+.cell.past {
+  color: var(--past);
+}
+
+.cell.line {
+  color: var(--line);
+}
+
+.cell.line.latest {
+  background: var(--line-bg);
+  color: var(--text-strong);
+}
+
 .cell.current {
   background: var(--current);
   color: #fff;
+}
+
+.cell.good {
+  background: var(--good-cell);
+  color: #fff;
+}
+
+.cell.corrected s {
+  color: var(--dim);
+  text-decoration: line-through;
+}
+
+.cell.corrected {
+  color: var(--text-strong);
 }
 
 .cell.wrong {
@@ -394,10 +477,18 @@ button {
   outline-offset: -1px;
 }
 
-.again {
+.again,
+.instead {
   margin: 0;
   padding: 8px 14px 0;
+}
+
+.again {
   color: var(--wrong);
+}
+
+.instead {
+  color: var(--text);
 }
 
 .submit {
@@ -430,6 +521,32 @@ button {
   padding: 0;
   color: var(--accent);
   cursor: pointer;
+}
+
+.history {
+  display: flex;
+  gap: 6px;
+  overflow: auto;
+  min-height: 44px;
+}
+
+.result {
+  flex: none;
+  min-width: 52px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 3px;
+  padding: 4px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.result span:first-child {
+  color: var(--dim);
+  font-size: 12px;
 }
 
 button:focus-visible {

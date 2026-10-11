@@ -10,6 +10,32 @@ type Piece = { color: "w" | "b"; type: string; square: string };
 
 const FILES = ["a", "b", "c", "d", "e", "f", "g", "h"];
 
+type Brush = "green" | "red" | "blue" | "yellow";
+type Shape = { brush: Brush; from: string; to: string };
+
+const BRUSH: Record<Brush, string> = {
+  green: "#15781B",
+  red: "#882020",
+  blue: "#003088",
+  yellow: "#e68f00",
+};
+
+function brushOf(event: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean; altKey: boolean }): Brush {
+  const ctrl = event.ctrlKey || event.metaKey;
+  if ((event.shiftKey && ctrl) || event.altKey) return "yellow";
+  if (event.shiftKey) return "red";
+  if (ctrl) return "blue";
+  return "green";
+}
+
+function toggleShape(list: Shape[], shape: Shape): Shape[] {
+  const same = list.findIndex(
+    (item) => item.from === shape.from && item.to === shape.to && item.brush === shape.brush,
+  );
+  if (same >= 0) return list.filter((_, index) => index !== same);
+  return [...list.filter((item) => item.from !== shape.from || item.to !== shape.to), shape];
+}
+
 function pieceSrc(color: string, type: string) {
   return `/pieces/${color}${type.toUpperCase()}.svg`;
 }
@@ -86,6 +112,9 @@ export function Board({
   const [lifted, setLifted] = useState<string | null>(null);
   const [ghost, setGhost] = useState<{ type: string; color: "w" | "b"; from: string } | null>(null);
   const [promo, setPromo] = useState<{ from: string; to: string; color: "w" | "b" } | null>(null);
+  const [shapes, setShapes] = useState<Shape[]>([]);
+  const [draft, setDraft] = useState<Shape | null>(null);
+  const drawRef = useRef<{ from: string; brush: Brush; pointerId: number } | null>(null);
 
   const hidden = useMemo(() => new Chess(hiddenFen), [hiddenFen]);
   const pieces = useMemo(() => piecesFromFen(visualFen), [visualFen]);
@@ -183,12 +212,28 @@ export function Board({
       return;
     }
     onMove(`${from}${to}`);
+    setShapes([]);
     snapBack(from);
     setSelected(null);
   }
 
   function onPointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.button === 2) {
+      const rect = boardRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const square = squareFromPoint(event.clientX, event.clientY, rect, orientation);
+      if (!square) return;
+      drawRef.current = { from: square, brush: brushOf(event), pointerId: event.pointerId };
+      setDraft(null);
+      try {
+        boardRef.current?.setPointerCapture(event.pointerId);
+      } catch {
+        /* synthetic events can reject capture */
+      }
+      return;
+    }
     if (event.button !== 0) return;
+    setShapes([]);
     if ((event.target as HTMLElement).closest(".promo")) return;
     if (promo) {
       setPromo(null);
@@ -208,6 +253,17 @@ export function Board({
   }
 
   function onPointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    const draw = drawRef.current;
+    if (draw && draw.pointerId === event.pointerId) {
+      const rect = boardRef.current?.getBoundingClientRect();
+      const square = rect ? squareFromPoint(event.clientX, event.clientY, rect, orientation) : null;
+      if (!square || square === draw.from) {
+        setDraft(null);
+        return;
+      }
+      setDraft({ brush: draw.brush, from: draw.from, to: square });
+      return;
+    }
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     drag.moved = true;
@@ -215,6 +271,16 @@ export function Board({
   }
 
   function onPointerUp(event: React.PointerEvent<HTMLDivElement>) {
+    const draw = drawRef.current;
+    if (draw && draw.pointerId === event.pointerId) {
+      drawRef.current = null;
+      const rect = boardRef.current?.getBoundingClientRect();
+      const square = rect ? squareFromPoint(event.clientX, event.clientY, rect, orientation) : null;
+      setDraft(null);
+      if (!square) return;
+      setShapes((list) => toggleShape(list, { brush: draw.brush, from: draw.from, to: square }));
+      return;
+    }
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     dragRef.current = null;
@@ -267,6 +333,12 @@ export function Board({
       aria-label="Chess board"
     >
       {squares}
+      <svg className="shapes" viewBox="0 0 800 800" aria-hidden="true">
+        {shapes.map((shape) => (
+          <ShapeMark key={`${shape.brush}${shape.from}${shape.to}`} shape={shape} orientation={orientation} />
+        ))}
+        {draft ? <ShapeMark shape={draft} orientation={orientation} /> : null}
+      </svg>
       {pieces.map((piece) => {
         const { x, y } = squareCoords(piece.square, orientation);
         return (
@@ -301,6 +373,7 @@ export function Board({
               type="button"
               onClick={() => {
                 onMove(`${promo.from}${promo.to}${type}`);
+                setShapes([]);
                 setPromo(null);
               }}
             >
@@ -310,6 +383,39 @@ export function Board({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function ShapeMark({ shape, orientation }: { shape: Shape; orientation: Orientation }) {
+  const from = squareCoords(shape.from, orientation);
+  const to = squareCoords(shape.to, orientation);
+  const x1 = (from.x + 0.5) * 100;
+  const y1 = (from.y + 0.5) * 100;
+  const x2 = (to.x + 0.5) * 100;
+  const y2 = (to.y + 0.5) * 100;
+  const color = BRUSH[shape.brush];
+  if (shape.from === shape.to) {
+    return <circle cx={x1} cy={y1} r="36" fill="none" stroke={color} strokeWidth="8" />;
+  }
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  const tipX = x2 - ux * 6;
+  const tipY = y2 - uy * 6;
+  const baseX = tipX - ux * 24;
+  const baseY = tipY - uy * 24;
+  const px = -uy;
+  const py = ux;
+  return (
+    <g>
+      <line x1={x1 + ux * 8} y1={y1 + uy * 8} x2={baseX} y2={baseY} stroke={color} strokeWidth="12" strokeLinecap="round" />
+      <polygon
+        points={`${tipX},${tipY} ${baseX + px * 14},${baseY + py * 14} ${baseX - px * 14},${baseY - py * 14}`}
+        fill={color}
+      />
+    </g>
   );
 }
 

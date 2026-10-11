@@ -19,6 +19,7 @@ const puzzle: Puzzle = {
   black: "b",
   blackRating: 1500,
   event: "3+0 Blitz",
+  gameUrl: "https://lichess.org/example",
   history: [],
   fenPly: 0,
 };
@@ -60,12 +61,81 @@ test("setup move is visible and the next cell is empty", () => {
   assert.equal(fenAfter(puzzle, []).split(" ")[1], "b");
 });
 
+test("older game moves stay quiet and entered moves stay on their own line", () => {
+  const blocks = buildSheet({
+    history: ["e4"],
+    fenPly: 1,
+    setupSan: "e5",
+    attempt: [{ san: "Nf3" }],
+    status: "playing",
+    wrongIndex: null,
+    revealed: null,
+    allowNext: true,
+    variations: [{ san: "Nc3", ply: 2 }],
+  });
+  const first = blocks[0];
+  assert.equal(first.type, "row");
+  if (first.type !== "row") return;
+  assert.equal(first.white?.mark, "past");
+  assert.equal(first.black?.mark, "past");
+  const second = blocks[1];
+  assert.equal(second.type, "variation");
+  const third = blocks[2];
+  assert.equal(third.type, "row");
+  if (third.type !== "row") return;
+  assert.equal(third.white?.san, "Nf3");
+  assert.equal(third.white?.mark, "line");
+});
+
+test("a solved line is marked green", () => {
+  const blocks = buildSheet({
+    history: [],
+    fenPly: 0,
+    setupSan: "e4",
+    attempt: [{ san: "Ke7" }, { san: "e5" }],
+    status: "solved",
+    wrongIndex: null,
+    revealed: null,
+    allowNext: false,
+    variations: [],
+  });
+  const row = blocks[0];
+  assert.equal(row.type, "row");
+  if (row.type !== "row") return;
+  assert.equal(row.black?.mark, "good");
+  const next = blocks[1];
+  assert.equal(next.type, "row");
+  if (next.type !== "row") return;
+  assert.equal(next.white?.mark, "good");
+});
+
+test("a wrong opponent reply is crossed out beside the stored move", () => {
+  const blocks = buildSheet({
+    history: [],
+    fenPly: 0,
+    setupSan: "e4",
+    attempt: [{ san: "Ke7" }, { san: "e5", strike: "Ke2" }],
+    status: "playing",
+    wrongIndex: null,
+    revealed: null,
+    allowNext: true,
+    variations: [],
+  });
+  const row = blocks[1];
+  assert.equal(row.type, "row");
+  if (row.type !== "row") return;
+  assert.equal(row.white?.mark, "corrected");
+  assert.equal(row.white?.strike, "Ke2");
+  assert.equal(row.white?.san, "e5");
+  assert.equal(row.black?.mark, "next");
+});
+
 test("a wrong ply is marked and the rest fades", () => {
   const blocks = buildSheet({
     history: [],
     fenPly: 0,
     setupSan: "e4",
-    attempt: ["Ke7", "e5"],
+    attempt: [{ san: "Ke7" }, { san: "e5" }],
     status: "wrong",
     wrongIndex: 0,
     revealed: null,
